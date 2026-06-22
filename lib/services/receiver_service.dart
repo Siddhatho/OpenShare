@@ -68,10 +68,11 @@ class ReceiverService {
         return;
       }
       final host = _serviceHost(service);
-      final token = service.txt?['token'];
-      if (host == null || token == null || service.port == null) {
+      final tokenBytes = service.txt?['token'];
+      if (host == null || tokenBytes == null || service.port == null) {
         return;
       }
+      final token = utf8.decode(tokenBytes);
       final endpoint = SenderEndpoint(
         name: service.name ?? 'OpenShare sender',
         host: host,

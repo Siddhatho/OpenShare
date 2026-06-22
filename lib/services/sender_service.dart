@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:nsd/nsd.dart';
@@ -78,7 +80,7 @@ class SenderService {
       type: serviceType,
       host: host,
       port: _server!.port,
-      txt: {'token': token},
+      txt: {'token': Uint8List.fromList(utf8.encode(token))},
     ));
 
     _session = SenderSession(endpoint: endpoint, manifest: manifest);

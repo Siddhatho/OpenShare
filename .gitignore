@@ -12,3 +12,6 @@ android/local.properties
 ios/Pods/
 ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
+*.hprof
+hs_err_pid*.log
+**/ios/Flutter/ephemeral/
