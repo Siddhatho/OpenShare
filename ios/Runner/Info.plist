@@ -32,6 +32,10 @@
 	<string>Scan an OpenShare QR code to connect when local discovery is unavailable.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>OpenShare finds and connects to nearby devices on your Wi-Fi network.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save received photos and videos to your Photos library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Save received photos and videos to your Photos library.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

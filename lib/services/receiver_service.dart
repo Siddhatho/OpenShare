@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:nsd/nsd.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:saver_gallery/saver_gallery.dart';
 
 import '../models/sender_endpoint.dart';
 import '../models/transfer_file.dart';
@@ -157,12 +158,13 @@ class ReceiverService {
 
         final actualHash = await _hashService.sha256File(target);
         if (actualHash == file.sha256) {
+          final savedPath = await _saveToGalleryIfMedia(file, target);
           yield DownloadProgress(
             file: file,
             received: file.size,
             total: file.size,
             status: DownloadStatus.complete,
-            savedPath: target.path,
+            savedPath: savedPath,
           );
           return;
         }
@@ -242,5 +244,57 @@ class ReceiverService {
     return null;
   }
 
+  Future<String> _saveToGalleryIfMedia(TransferFile file, File target) async {
+    if (!_isGalleryMedia(file)) {
+      return target.path;
+    }
+
+    final result = await SaverGallery.saveFile(
+      filePath: target.path,
+      fileName: _sanitize(file.name),
+      albumPath: 'OpenShare',
+      skipIfExists: false,
+    );
+    if (result.isSuccess) {
+      return result.savedUri ?? target.path;
+    }
+    return target.path;
+  }
+
+  bool _isGalleryMedia(TransferFile file) {
+    final mimeType = file.mimeType?.toLowerCase();
+    if (mimeType != null) {
+      return mimeType.startsWith('image/') || mimeType.startsWith('video/');
+    }
+
+    final extension = file.name.split('.').last.toLowerCase();
+    return _imageExtensions.contains(extension) ||
+        _videoExtensions.contains(extension);
+  }
+
   String _sanitize(String name) => name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+
+  static const _imageExtensions = {
+    'avif',
+    'bmp',
+    'gif',
+    'heic',
+    'heif',
+    'jpg',
+    'jpeg',
+    'png',
+    'webp',
+  };
+
+  static const _videoExtensions = {
+    '3gp',
+    'avi',
+    'm4v',
+    'mkv',
+    'mov',
+    'mp4',
+    'mpeg',
+    'mpg',
+    'webm',
+  };
 }

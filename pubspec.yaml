@@ -17,6 +17,7 @@ dependencies:
   path_provider: ^2.1.5
   qr_flutter: ^4.1.0
   shelf: ^1.4.2
+  saver_gallery: ^5.1.0
 
 dev_dependencies:
   flutter_lints: ^5.0.0

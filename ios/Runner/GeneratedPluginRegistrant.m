@@ -24,12 +24,19 @@
 @import nsd_ios;
 #endif
 
+#if __has_include(<saver_gallery/SaverGalleryPlugin.h>)
+#import <saver_gallery/SaverGalleryPlugin.h>
+#else
+@import saver_gallery;
+#endif
+
 @implementation GeneratedPluginRegistrant
 
 + (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {
   [FilePickerPlugin registerWithRegistrar:[registry registrarForPlugin:@"FilePickerPlugin"]];
   [MobileScannerPlugin registerWithRegistrar:[registry registrarForPlugin:@"MobileScannerPlugin"]];
   [NsdIosPlugin registerWithRegistrar:[registry registrarForPlugin:@"NsdIosPlugin"]];
+  [SaverGalleryPlugin registerWithRegistrar:[registry registrarForPlugin:@"SaverGalleryPlugin"]];
 }
 
 @end

@@ -45,5 +45,10 @@ public final class GeneratedPluginRegistrant {
     } catch (Exception e) {
       Log.e(TAG, "Error registering plugin nsd_android, com.haberey.flutter.nsd_android.NsdAndroidPlugin", e);
     }
+    try {
+      flutterEngine.getPlugins().add(new com.mhz.savegallery.saver_gallery.SaverGalleryPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin saver_gallery, com.mhz.savegallery.saver_gallery.SaverGalleryPlugin", e);
+    }
   }
 }

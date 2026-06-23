@@ -15,3 +15,5 @@ ios/Flutter/Flutter.podspec
 *.hprof
 hs_err_pid*.log
 **/ios/Flutter/ephemeral/
+*.log
+flutter_01.png
