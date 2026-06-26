@@ -53,7 +53,9 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<DownloadProgress>? _downloadSubscription;
   bool _startingSender = false;
   bool _discovering = false;
+  bool _loadingManifest = false;
   String? _message;
+  String? _receiverError;
 
   @override
   void dispose() {
@@ -97,6 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _discovering = true;
       _senders.clear();
       _message = null;
+      _receiverError = null;
     });
     try {
       final found = await _receiverService.discover();
@@ -113,15 +116,29 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _connect(SenderEndpoint endpoint) async {
     setState(() {
       _message = null;
+      _receiverError = null;
       _receiverManifest = null;
       _connectedEndpoint = endpoint;
+      _loadingManifest = true;
       _downloads.clear();
     });
     try {
       final manifest = await _receiverService.fetchManifest(endpoint);
-      setState(() => _receiverManifest = manifest);
-    } catch (error) {
-      setState(() => _message = error.toString());
+      if (mounted) {
+        setState(() => _receiverManifest = manifest);
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to fetch receiver manifest: $error\n$stackTrace');
+      if (mounted) {
+        setState(() {
+          _message = error.toString();
+          _receiverError = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingManifest = false);
+      }
     }
   }
 
@@ -144,16 +161,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _scanQr() async {
-    final payload = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const QrScanScreen()),
-    );
-    if (payload == null) {
-      return;
-    }
     try {
+      final payload = await Navigator.of(context).push<String>(
+        MaterialPageRoute(builder: (_) => const QrScanScreen()),
+      );
+      if (payload == null) {
+        return;
+      }
       await _connect(SenderEndpoint.fromQrPayload(payload));
-    } catch (error) {
-      setState(() => _message = error.toString());
+    } catch (error, stackTrace) {
+      debugPrint('QR scan navigation/connect failed: $error\n$stackTrace');
+      if (mounted) {
+        setState(() {
+          _message = error.toString();
+          _receiverError = error.toString();
+          _loadingManifest = false;
+        });
+      }
     }
   }
 
@@ -182,8 +206,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               _ReceiverPane(
                 discovering: _discovering,
+                loadingManifest: _loadingManifest,
                 senders: _senders,
                 manifest: _receiverManifest,
+                error: _receiverError,
                 downloads: _downloads,
                 onDiscover: _discover,
                 onScanQr: _scanQr,
@@ -283,8 +309,10 @@ class _SenderPane extends StatelessWidget {
 class _ReceiverPane extends StatelessWidget {
   const _ReceiverPane({
     required this.discovering,
+    required this.loadingManifest,
     required this.senders,
     required this.manifest,
+    required this.error,
     required this.downloads,
     required this.onDiscover,
     required this.onScanQr,
@@ -293,8 +321,10 @@ class _ReceiverPane extends StatelessWidget {
   });
 
   final bool discovering;
+  final bool loadingManifest;
   final List<DiscoveredSender> senders;
   final TransferManifest? manifest;
+  final String? error;
   final Map<String, DownloadProgress> downloads;
   final VoidCallback onDiscover;
   final VoidCallback onScanQr;
@@ -304,6 +334,7 @@ class _ReceiverPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final activeManifest = manifest;
+    final activeError = error;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -340,6 +371,25 @@ class _ReceiverPane extends StatelessWidget {
             onTap: () => onConnect(sender.endpoint),
           ),
         ),
+        if (loadingManifest)
+          const _ReceiverStatePanel(
+            icon: Icons.sync,
+            title: 'Loading sender details',
+            message: 'Fetching the file list...',
+            loading: true,
+          )
+        else if (activeError != null)
+          _ReceiverStatePanel(
+            icon: Icons.error_outline,
+            title: 'Could not load sender',
+            message: activeError,
+          )
+        else if (activeManifest == null && senders.isEmpty)
+          const _ReceiverStatePanel(
+            icon: Icons.devices_other,
+            title: 'No sender connected',
+            message: 'Discover a sender or scan a QR code.',
+          ),
         if (activeManifest != null) ...[
           const Divider(height: 30),
           Text(
@@ -350,21 +400,77 @@ class _ReceiverPane extends StatelessWidget {
             '${activeManifest.files.length} files, '
             '${_formatBytes(activeManifest.totalBytes)}',
           ),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: onStartDownload,
-            icon: const Icon(Icons.download),
-            label: const Text('Download all'),
-          ),
-          const SizedBox(height: 14),
-          ...activeManifest.files.map(
-            (file) => _DownloadRow(
-              file: file,
-              progress: downloads[file.id],
+          if (activeManifest.files.isEmpty)
+            const _ReceiverStatePanel(
+              icon: Icons.folder_off_outlined,
+              title: 'No files available',
+              message: 'The sender did not share any files.',
+            )
+          else ...[
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: onStartDownload,
+              icon: const Icon(Icons.download),
+              label: const Text('Download all'),
             ),
-          ),
+            const SizedBox(height: 14),
+            ...activeManifest.files.map(
+              (file) => _DownloadRow(
+                file: file,
+                progress: downloads[file.id],
+              ),
+            ),
+          ],
         ],
       ],
+    );
+  }
+}
+
+class _ReceiverStatePanel extends StatelessWidget {
+  const _ReceiverStatePanel({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.loading = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (loading)
+            const SizedBox.square(
+              dimension: 32,
+              child: CircularProgressIndicator(strokeWidth: 3),
+            )
+          else
+            Icon(icon, size: 40, color: colorScheme.primary),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -430,8 +536,15 @@ class _DownloadRow extends StatelessWidget {
   }
 }
 
-class QrScanScreen extends StatelessWidget {
+class QrScanScreen extends StatefulWidget {
   const QrScanScreen({super.key});
+
+  @override
+  State<QrScanScreen> createState() => _QrScanScreenState();
+}
+
+class _QrScanScreenState extends State<QrScanScreen> {
+  bool _handledScan = false;
 
   @override
   Widget build(BuildContext context) {
@@ -439,10 +552,18 @@ class QrScanScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Scan sender QR')),
       body: MobileScanner(
         onDetect: (capture) {
-          final value =
-              capture.barcodes.isEmpty ? null : capture.barcodes.first.rawValue;
-          if (value != null) {
+          for (final barcode in capture.barcodes) {
+            debugPrint('QR raw value: ${barcode.rawValue}');
+            if (_handledScan) {
+              return;
+            }
+            final value = barcode.rawValue;
+            if (value == null || value.isEmpty) {
+              continue;
+            }
+            _handledScan = true;
             Navigator.of(context).pop(value);
+            return;
           }
         },
       ),
