@@ -37,12 +37,6 @@ class PokemonIdentityService {
 
   Future<PokemonIdentity> load() async {
     final preferences = await SharedPreferences.getInstance();
-    final storedName = preferences.getString(_nameKey);
-    final storedSprite = preferences.getString(_spriteKey);
-    if (_hasValue(storedName) && _hasValue(storedSprite)) {
-      return PokemonIdentity(name: storedName!, spriteUrl: storedSprite!);
-    }
-
     final id = _random.nextInt(151) + 1;
     final response = await _dio.getUri<Map<String, Object?>>(
       Uri.https('pokeapi.co', '/api/v2/pokemon/$id'),
