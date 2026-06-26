@@ -40,7 +40,10 @@ class SenderService {
 
   SenderSession? get session => _session;
 
-  Future<SenderSession> start(List<PlatformFile> pickedFiles) async {
+  Future<SenderSession> start(
+    List<PlatformFile> pickedFiles, {
+    required String deviceName,
+  }) async {
     await stop();
     final files = await _prepareFiles(pickedFiles);
     if (files.isEmpty) {
@@ -49,7 +52,6 @@ class SenderService {
 
     final token = _hashService.token();
     final sessionId = _hashService.token();
-    final deviceName = 'OpenShare ${DateTime.now().millisecondsSinceEpoch}';
     final manifest = TransferManifest(
       deviceName: deviceName,
       sessionId: sessionId,
@@ -163,7 +165,8 @@ class SenderService {
     return Response.notFound('Not found.');
   }
 
-  Future<Response> _serveFile(Request request, TransferFile transferFile) async {
+  Future<Response> _serveFile(
+      Request request, TransferFile transferFile) async {
     final file = File(transferFile.path);
     if (!await file.exists()) {
       return Response.notFound('File missing on sender.');

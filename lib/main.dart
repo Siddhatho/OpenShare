@@ -7,6 +7,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'models/sender_endpoint.dart';
 import 'models/transfer_file.dart';
+import 'services/pokemon_identity_service.dart';
 import 'services/receiver_service.dart';
 import 'services/sender_service.dart';
 
@@ -34,6 +35,37 @@ class OpenShareApp extends StatelessWidget {
   }
 }
 
+class _AppHeader extends StatelessWidget {
+  const _AppHeader({required this.identity});
+
+  final PokemonIdentity? identity;
+
+  @override
+  Widget build(BuildContext context) {
+    final spriteUrl = identity?.spriteUrl;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CircleAvatar(
+          radius: 16,
+          backgroundColor: colorScheme.primaryContainer,
+          foregroundImage: spriteUrl == null ? null : NetworkImage(spriteUrl),
+          child: spriteUrl == null
+              ? Icon(
+                  Icons.catching_pokemon,
+                  size: 18,
+                  color: colorScheme.onPrimaryContainer,
+                )
+              : null,
+        ),
+        const SizedBox(width: 10),
+        const Text('OpenShare'),
+      ],
+    );
+  }
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -44,28 +76,65 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _senderService = SenderService();
   final _receiverService = ReceiverService();
+  final _pokemonIdentityService = PokemonIdentityService();
   final _downloads = <String, DownloadProgress>{};
   final _senders = <DiscoveredSender>[];
 
+  PokemonIdentity? _pokemonIdentity;
   SenderSession? _senderSession;
   TransferManifest? _receiverManifest;
   SenderEndpoint? _connectedEndpoint;
   StreamSubscription<DownloadProgress>? _downloadSubscription;
+  Timer? _completionTimer;
+  Timer? _completionHideTimer;
+  Timer? _completionResetTimer;
+  bool _loadingIdentity = true;
   bool _startingSender = false;
   bool _discovering = false;
   bool _loadingManifest = false;
+  bool _showReceiverCompletion = false;
+  bool _receiverCompletionVisible = false;
   String? _message;
   String? _receiverError;
 
   @override
+  void initState() {
+    super.initState();
+    _loadPokemonIdentity();
+  }
+
+  @override
   void dispose() {
+    _cancelCompletionTimers();
     _downloadSubscription?.cancel();
     _senderService.stop();
     _receiverService.stopDiscoveryScan();
     super.dispose();
   }
 
+  Future<void> _loadPokemonIdentity() async {
+    try {
+      final identity = await _pokemonIdentityService.load();
+      if (mounted) {
+        setState(() => _pokemonIdentity = identity);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _message = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingIdentity = false);
+      }
+    }
+  }
+
   Future<void> _pickAndSend() async {
+    final identity = _pokemonIdentity;
+    if (identity == null) {
+      setState(() => _message = 'Still preparing your device identity.');
+      return;
+    }
     setState(() {
       _startingSender = true;
       _message = null;
@@ -78,7 +147,10 @@ class _HomeScreenState extends State<HomeScreen> {
       if (result == null || result.files.isEmpty) {
         return;
       }
-      final session = await _senderService.start(result.files);
+      final session = await _senderService.start(
+        result.files,
+        deviceName: identity.displayName,
+      );
       setState(() => _senderSession = session);
     } catch (error) {
       setState(() => _message = error.toString());
@@ -95,11 +167,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _discover() async {
+    _cancelCompletionTimers();
     setState(() {
       _discovering = true;
       _senders.clear();
       _message = null;
       _receiverError = null;
+      _showReceiverCompletion = false;
+      _receiverCompletionVisible = false;
     });
     try {
       final found = await _receiverService.discover();
@@ -114,12 +189,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _connect(SenderEndpoint endpoint) async {
+    _cancelCompletionTimers();
     setState(() {
       _message = null;
       _receiverError = null;
       _receiverManifest = null;
       _connectedEndpoint = endpoint;
       _loadingManifest = true;
+      _showReceiverCompletion = false;
+      _receiverCompletionVisible = false;
       _downloads.clear();
     });
     try {
@@ -148,16 +226,75 @@ class _HomeScreenState extends State<HomeScreen> {
     if (endpoint == null || manifest == null) {
       return;
     }
+    _cancelCompletionTimers();
     _downloadSubscription?.cancel();
+    setState(() {
+      _showReceiverCompletion = false;
+      _receiverCompletionVisible = false;
+    });
     _downloadSubscription =
         _receiverService.downloadAll(endpoint, manifest).listen(
       (progress) {
         setState(() => _downloads[progress.file.id] = progress);
+        _scheduleReceiverCompletionIfDone();
       },
       onError: (Object error) {
         setState(() => _message = error.toString());
       },
     );
+  }
+
+  void _scheduleReceiverCompletionIfDone() {
+    final manifest = _receiverManifest;
+    if (manifest == null || manifest.files.isEmpty || _showReceiverCompletion) {
+      return;
+    }
+    final allDone = manifest.files.every(
+      (file) => _downloads[file.id]?.status == DownloadStatus.complete,
+    );
+    if (!allDone || _completionTimer?.isActive == true) {
+      return;
+    }
+    _completionTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() {
+          _showReceiverCompletion = true;
+          _receiverCompletionVisible = true;
+        });
+        _completionHideTimer = Timer(const Duration(seconds: 5), () {
+          if (!mounted) {
+            return;
+          }
+          setState(() => _receiverCompletionVisible = false);
+          _completionResetTimer = Timer(
+            const Duration(milliseconds: 300),
+            _resetReceiverScreen,
+          );
+        });
+      }
+    });
+  }
+
+  void _cancelCompletionTimers() {
+    _completionTimer?.cancel();
+    _completionHideTimer?.cancel();
+    _completionResetTimer?.cancel();
+  }
+
+  void _resetReceiverScreen() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _senders.clear();
+      _receiverManifest = null;
+      _connectedEndpoint = null;
+      _downloads.clear();
+      _receiverError = null;
+      _loadingManifest = false;
+      _showReceiverCompletion = false;
+      _receiverCompletionVisible = false;
+    });
   }
 
   Future<void> _scanQr() async {
@@ -187,7 +324,7 @@ class _HomeScreenState extends State<HomeScreen> {
       length: 2,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('OpenShare'),
+          title: _AppHeader(identity: _pokemonIdentity),
           bottom: const TabBar(
             tabs: [
               Tab(icon: Icon(Icons.upload_file), text: 'Send'),
@@ -201,6 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
               _SenderPane(
                 session: _senderSession,
                 starting: _startingSender,
+                loadingIdentity: _loadingIdentity,
                 onPickAndSend: _pickAndSend,
                 onStop: _stopSending,
               ),
@@ -211,6 +349,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 manifest: _receiverManifest,
                 error: _receiverError,
                 downloads: _downloads,
+                complete: _showReceiverCompletion,
+                completionVisible: _receiverCompletionVisible,
                 onDiscover: _discover,
                 onScanQr: _scanQr,
                 onConnect: _connect,
@@ -244,12 +384,14 @@ class _SenderPane extends StatelessWidget {
   const _SenderPane({
     required this.session,
     required this.starting,
+    required this.loadingIdentity,
     required this.onPickAndSend,
     required this.onStop,
   });
 
   final SenderSession? session;
   final bool starting;
+  final bool loadingIdentity;
   final VoidCallback onPickAndSend;
   final VoidCallback onStop;
 
@@ -260,14 +402,20 @@ class _SenderPane extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       children: [
         FilledButton.icon(
-          onPressed: starting ? null : onPickAndSend,
-          icon: starting
+          onPressed: starting || loadingIdentity ? null : onPickAndSend,
+          icon: starting || loadingIdentity
               ? const SizedBox.square(
                   dimension: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.add),
-          label: Text(starting ? 'Preparing hashes' : 'Pick files'),
+          label: Text(
+            loadingIdentity
+                ? 'Preparing identity'
+                : starting
+                    ? 'Preparing hashes'
+                    : 'Pick files',
+          ),
         ),
         if (activeSession != null) ...[
           const SizedBox(height: 18),
@@ -314,6 +462,8 @@ class _ReceiverPane extends StatelessWidget {
     required this.manifest,
     required this.error,
     required this.downloads,
+    required this.complete,
+    required this.completionVisible,
     required this.onDiscover,
     required this.onScanQr,
     required this.onConnect,
@@ -326,6 +476,8 @@ class _ReceiverPane extends StatelessWidget {
   final TransferManifest? manifest;
   final String? error;
   final Map<String, DownloadProgress> downloads;
+  final bool complete;
+  final bool completionVisible;
   final VoidCallback onDiscover;
   final VoidCallback onScanQr;
   final ValueChanged<SenderEndpoint> onConnect;
@@ -361,68 +513,107 @@ class _ReceiverPane extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 14),
-        ...senders.map(
-          (sender) => ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.phone_iphone),
-            title: Text(sender.endpoint.name),
-            subtitle: Text('${sender.endpoint.host}:${sender.endpoint.port}'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => onConnect(sender.endpoint),
+        if (complete)
+          _ReceiverCompleteStatus(visible: completionVisible)
+        else ...[
+          ...senders.map(
+            (sender) => ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.phone_iphone),
+              title: Text(sender.endpoint.name),
+              subtitle: Text('${sender.endpoint.host}:${sender.endpoint.port}'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => onConnect(sender.endpoint),
+            ),
           ),
-        ),
-        if (loadingManifest)
-          const _ReceiverStatePanel(
-            icon: Icons.sync,
-            title: 'Loading sender details',
-            message: 'Fetching the file list...',
-            loading: true,
-          )
-        else if (activeError != null)
-          _ReceiverStatePanel(
-            icon: Icons.error_outline,
-            title: 'Could not load sender',
-            message: activeError,
-          )
-        else if (activeManifest == null && senders.isEmpty)
-          const _ReceiverStatePanel(
-            icon: Icons.devices_other,
-            title: 'No sender connected',
-            message: 'Discover a sender or scan a QR code.',
-          ),
-        if (activeManifest != null) ...[
-          const Divider(height: 30),
-          Text(
-            activeManifest.deviceName,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          Text(
-            '${activeManifest.files.length} files, '
-            '${_formatBytes(activeManifest.totalBytes)}',
-          ),
-          if (activeManifest.files.isEmpty)
+          if (loadingManifest)
             const _ReceiverStatePanel(
-              icon: Icons.folder_off_outlined,
-              title: 'No files available',
-              message: 'The sender did not share any files.',
+              icon: Icons.sync,
+              title: 'Loading sender details',
+              message: 'Fetching the file list...',
+              loading: true,
             )
-          else ...[
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: onStartDownload,
-              icon: const Icon(Icons.download),
-              label: const Text('Download all'),
+          else if (activeError != null)
+            _ReceiverStatePanel(
+              icon: Icons.error_outline,
+              title: 'Could not load sender',
+              message: activeError,
+            )
+          else if (activeManifest == null && senders.isEmpty)
+            const _ReceiverStatePanel(
+              icon: Icons.devices_other,
+              title: 'No sender connected',
+              message: 'Discover a sender or scan a QR code.',
             ),
-            const SizedBox(height: 14),
-            ...activeManifest.files.map(
-              (file) => _DownloadRow(
-                file: file,
-                progress: downloads[file.id],
+          if (activeManifest != null) ...[
+            const Divider(height: 30),
+            Text(
+              activeManifest.deviceName,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            Text(
+              '${activeManifest.files.length} files, '
+              '${_formatBytes(activeManifest.totalBytes)}',
+            ),
+            if (activeManifest.files.isEmpty)
+              const _ReceiverStatePanel(
+                icon: Icons.folder_off_outlined,
+                title: 'No files available',
+                message: 'The sender did not share any files.',
+              )
+            else ...[
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: onStartDownload,
+                icon: const Icon(Icons.download),
+                label: const Text('Download all'),
               ),
-            ),
+              const SizedBox(height: 14),
+              ...activeManifest.files.map(
+                (file) => _DownloadRow(
+                  file: file,
+                  progress: downloads[file.id],
+                ),
+              ),
+            ],
           ],
         ],
       ],
+    );
+  }
+}
+
+class _ReceiverCompleteStatus extends StatelessWidget {
+  const _ReceiverCompleteStatus({required this.visible});
+
+  final bool visible;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return AnimatedOpacity(
+      opacity: visible ? 1 : 0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.check_circle,
+              size: 48,
+              color: colorScheme.primary,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Received! Check your gallery.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

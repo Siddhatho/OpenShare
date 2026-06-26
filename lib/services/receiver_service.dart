@@ -63,6 +63,7 @@ class ReceiverService {
     Duration timeout = const Duration(seconds: 8),
   }) async {
     final senders = <String, DiscoveredSender>{};
+    final localAddresses = await _localAddresses();
     _discovery = await startDiscovery(SenderService.serviceType);
     _discovery!.addServiceListener((service, status) {
       if (status != ServiceStatus.found) {
@@ -71,6 +72,9 @@ class ReceiverService {
       final host = _serviceHost(service);
       final tokenBytes = service.txt?['token'];
       if (host == null || tokenBytes == null || service.port == null) {
+        return;
+      }
+      if (_isLocalAddress(host, localAddresses)) {
         return;
       }
       final token = utf8.decode(tokenBytes);
@@ -244,6 +248,31 @@ class ReceiverService {
     return null;
   }
 
+  Future<Set<String>> _localAddresses() async {
+    final interfaces = await NetworkInterface.list(includeLoopback: false);
+    return {
+      for (final interface in interfaces)
+        for (final address in interface.addresses)
+          _normalizeAddress(address.address),
+    };
+  }
+
+  bool _isLocalAddress(String host, Set<String> localAddresses) {
+    final parsed = InternetAddress.tryParse(host);
+    return localAddresses.contains(_normalizeAddress(parsed?.address ?? host));
+  }
+
+  String _normalizeAddress(String address) {
+    final trimmed = address.trim().toLowerCase();
+    final withoutBrackets = trimmed.startsWith('[') && trimmed.endsWith(']')
+        ? trimmed.substring(1, trimmed.length - 1)
+        : trimmed;
+    final scopeIndex = withoutBrackets.indexOf('%');
+    return scopeIndex == -1
+        ? withoutBrackets
+        : withoutBrackets.substring(0, scopeIndex);
+  }
+
   Future<String> _saveToGalleryIfMedia(TransferFile file, File target) async {
     if (!_isGalleryMedia(file)) {
       return target.path;
@@ -272,7 +301,8 @@ class ReceiverService {
         _videoExtensions.contains(extension);
   }
 
-  String _sanitize(String name) => name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+  String _sanitize(String name) =>
+      name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
 
   static const _imageExtensions = {
     'avif',
